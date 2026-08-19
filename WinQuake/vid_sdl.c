@@ -77,7 +77,40 @@ static cvar_t	_windowed_mouse = {"_windowed_mouse", "1", true};
 static cvar_t	vid_stats = {"vid_stats", "0"};
 static qboolean	no_present;
 
+// Push only the rectangle we actually drew.  On a panel wired over a slow
+// bus the handoff is proportional to the bytes sent, so the letterbox rows
+// around a 320x240 frame on a 320x320 panel are pure waste -- they are
+// black every frame and cost a third of the transfer.  Cleared once at
+// startup, then never sent again.  -fullupdate restores whole-surface
+// updates if a driver mishandles partial ones.
+static qboolean	full_update;
+
 static void IN_GrabMouse (qboolean grab);
+
+/*
+================
+VID_Present
+
+Hand one rectangle to the display.  Bytes transferred is what costs time on
+a slow panel bus, so send only what was drawn.
+================
+*/
+static void VID_Present (int x, int y, int w, int h)
+{
+	SDL_Rect	r;
+
+	if (full_update)
+	{
+		SDL_UpdateWindowSurface (sdl_window);
+		return;
+	}
+
+	r.x = x;
+	r.y = y;
+	r.w = w;
+	r.h = h;
+	SDL_UpdateWindowSurfaceRects (sdl_window, &r, 1);
+}
 
 /*
 ================
@@ -284,7 +317,17 @@ void	VID_Init (unsigned char *palette)
 	Cvar_RegisterVariable (&_windowed_mouse);
 	Cvar_RegisterVariable (&vid_stats);
 
-	no_present = (COM_CheckParm("-nopresent") != 0);
+	no_present  = (COM_CheckParm("-nopresent") != 0);
+	full_update = (COM_CheckParm("-fullupdate") != 0);
+
+	// Paint the letterbox black once; from here on only the drawn rectangle
+	// is sent, so these rows are never transferred again.
+	if (sdl_winsurf)
+	{
+		SDL_FillRect (sdl_winsurf, NULL,
+				SDL_MapRGB (sdl_winsurf->format, 0, 0, 0));
+		SDL_UpdateWindowSurface (sdl_window);
+	}
 	if (no_present)
 		Con_Printf ("VID: -nopresent, frames will not reach the display\n");
 
@@ -446,7 +489,7 @@ void	VID_Update (vrect_t *rects)
 
 			tmid = Sys_FloatTime ();
 			if (!no_present)
-				SDL_UpdateWindowSurface (sdl_window);
+				VID_Present (ox, oy, w * zoom, h * zoom);
 			tend = Sys_FloatTime ();
 
 			acc_convert += tmid - tstart;
@@ -464,7 +507,7 @@ void	VID_Update (vrect_t *rects)
 		}
 
 		if (!no_present)
-			SDL_UpdateWindowSurface (sdl_window);
+			VID_Present (ox, oy, w * zoom, h * zoom);
 		return;
 	}
 
