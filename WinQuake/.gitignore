@@ -1,3 +1,7 @@
 # ARM/Linux build output
 debug*/
 release*/
+asan/
+
+# Game data (not redistributable)
+id1/

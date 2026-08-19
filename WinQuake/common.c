@@ -862,15 +862,19 @@ void COM_FileBase (char *in, char *out)
 	while (s != in && *s != '.')
 		s--;
 	
-	for (s2 = s ; *s2 && *s2 != '/' ; s2--)
+	// Walk back to the first character of the basename.  The original loop
+	// had no lower bound: for a path containing no '/' it ran off the front
+	// of the buffer and relied on whatever byte preceded the string being
+	// NUL or '/'.  ASan flags it as a global-buffer-overflow read.
+	// s2 now points AT the basename rather than one before it.
+	for (s2 = s ; s2 > in && *(s2-1) != '/' ; s2--)
 	;
-	
-	if (s-s2 < 2)
+
+	if (s-s2 < 1)
 		strcpy (out,"?model?");
 	else
 	{
-		s--;
-		strncpy (out,s2+1, s-s2);
+		strncpy (out,s2, s-s2);
 		out[s-s2] = 0;
 	}
 }
