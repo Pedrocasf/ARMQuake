@@ -211,6 +211,8 @@ void R_PrintTimes (void)
 R_PrintDSpeeds
 =============
 */
+extern float dc_time, dsp_time, dz_time;
+
 void R_PrintDSpeeds (void)
 {
 	float	ms, dp_time, r_time2, rw_time, db_time, se_time, de_time, dv_time;
@@ -225,9 +227,17 @@ void R_PrintDSpeeds (void)
 	dv_time = (dv_time2 - dv_time1) * 1000;
 	ms = (r_time2 - r_time1) * 1000;
 
-	Con_Printf ("%3i %4.1fp %3iw %4.1fb %3is %4.1fe %4.1fv\n",
-				(int)ms, dp_time, (int)rw_time, db_time, (int)se_time, de_time,
-				dv_time);
+	// Printed as floats throughout: the world walk and scan-edge stages were
+	// %3i, so on anything faster than a 1996 CPU they both read as 0 and the
+	// two most expensive parts of the frame were invisible.
+	// ms=total  w=world BSP+edges  b=brush ents  s=scan/draw spans
+	// e=alias models  v=view model  p=particles
+	Con_Printf ("%6.2fms %6.2fw %6.2fb %6.2fs %6.2fe %6.2fv %6.2fp"
+				" | %6.2fcache %6.2fspan %6.2fzspan\n",
+				ms, rw_time, db_time, se_time, de_time, dv_time, dp_time,
+				dc_time*1000, dsp_time*1000, dz_time*1000);
+
+	dc_time = dsp_time = dz_time = 0;
 }
 
 

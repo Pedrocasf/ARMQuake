@@ -21,6 +21,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "d_local.h"
+#include "r_local.h"
+
+// r_dspeeds breakdown of the span stage, which dominates the frame.  These
+// separate the two very different costs hiding inside it: building the
+// lightmapped surface texture into the cache, versus actually texture-mapping
+// the spans.  Only sampled when r_dspeeds is set, since it is one
+// Sys_FloatTime pair per surface.
+float		dc_time, dsp_time, dz_time;
 
 static int	miplevel;
 
@@ -178,6 +186,8 @@ void D_DrawSurfaces (void)
 	surfcache_t		*pcurrentcache;
 	vec3_t			world_transformed_modelorg;
 	vec3_t			local_modelorg;
+	int				prof = (r_dspeeds.value != 0);
+	double			t0 = 0, t1 = 0, t2 = 0;
 
 	currententity = &cl_entities[0];
 	TransformVector (modelorg, transformed_modelorg);
@@ -297,7 +307,11 @@ void D_DrawSurfaces (void)
 				* pface->texinfo->mipadjust);
 
 			// FIXME: make this passed in to D_CacheSurface
+				if (prof) t0 = Sys_FloatTime ();
+
 				pcurrentcache = D_CacheSurface (pface, miplevel);
+
+				if (prof) { t1 = Sys_FloatTime (); dc_time += t1 - t0; }
 
 				cacheblock = (pixel_t *)pcurrentcache->data;
 				cachewidth = pcurrentcache->width;
@@ -306,7 +320,11 @@ void D_DrawSurfaces (void)
 
 				(*d_drawspans) (s->spans);
 
+				if (prof) { t2 = Sys_FloatTime (); dsp_time += t2 - t1; }
+
 				D_DrawZSpans (s->spans);
+
+				if (prof) dz_time += Sys_FloatTime () - t2;
 
 				if (s->insubmodel)
 				{
