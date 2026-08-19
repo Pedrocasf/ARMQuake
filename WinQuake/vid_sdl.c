@@ -69,6 +69,14 @@ static float	old_mouse_x, old_mouse_y;
 static cvar_t	m_filter = {"m_filter", "0"};
 static cvar_t	_windowed_mouse = {"_windowed_mouse", "1", true};
 
+// vid_stats 1 reports, every 100 frames, how long the 8-bit -> native
+// conversion takes versus the call that actually hands the frame to the
+// display.  r_dspeeds cannot see either of them: it only measures inside
+// R_RenderView.  -nopresent skips the handoff entirely, which isolates a
+// blocking display path from CPU cost.
+static cvar_t	vid_stats = {"vid_stats", "0"};
+static qboolean	no_present;
+
 static void IN_GrabMouse (qboolean grab);
 
 /*
@@ -274,6 +282,11 @@ void	VID_Init (unsigned char *palette)
 
 	Cvar_RegisterVariable (&m_filter);
 	Cvar_RegisterVariable (&_windowed_mouse);
+	Cvar_RegisterVariable (&vid_stats);
+
+	no_present = (COM_CheckParm("-nopresent") != 0);
+	if (no_present)
+		Con_Printf ("VID: -nopresent, frames will not reach the display\n");
 
 	vid_initialized = true;
 }
@@ -328,6 +341,7 @@ void	VID_Update (vrect_t *rects)
 	{
 		int		w, h, x, y, ox, oy, zoom;
 		byte	*srow;
+		double	tstart = vid_stats.value ? Sys_FloatTime () : 0;
 
 		// The surface is invalidated by a resize, so re-fetch each frame;
 		// this is a cheap accessor, not an allocation.
@@ -424,7 +438,33 @@ void	VID_Update (vrect_t *rects)
 		if (SDL_MUSTLOCK (sdl_winsurf))
 			SDL_UnlockSurface (sdl_winsurf);
 
-		SDL_UpdateWindowSurface (sdl_window);
+		if (vid_stats.value)
+		{
+			static double	acc_convert, acc_present;
+			static int		nframes;
+			double			tmid, tend;
+
+			tmid = Sys_FloatTime ();
+			if (!no_present)
+				SDL_UpdateWindowSurface (sdl_window);
+			tend = Sys_FloatTime ();
+
+			acc_convert += tmid - tstart;
+			acc_present += tend - tmid;
+
+			if (++nframes >= 100)
+			{
+				Con_Printf ("VID: convert %.2fms  present %.2fms\n",
+						acc_convert * 1000 / nframes,
+						acc_present * 1000 / nframes);
+				acc_convert = acc_present = 0;
+				nframes = 0;
+			}
+			return;
+		}
+
+		if (!no_present)
+			SDL_UpdateWindowSurface (sdl_window);
 		return;
 	}
 
