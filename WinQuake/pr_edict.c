@@ -977,6 +977,48 @@ void ED_LoadFromFile (char *data)
 }
 
 
+char	*pr_engine_strings;
+
+/*
+===============
+PR_SetEngineString
+
+Hand a C string owned by the engine to progs.
+
+A string_t is a byte offset from pr_strings, so `someptr - pr_strings` only
+works while the two live close enough for the difference to fit in an int.
+progs.dat is loaded into the hunk, so anything else in the hunk qualifies --
+the whole heap is a few megabytes.  Globals do not: `server_t sv` and
+`model_t mod_known[]` are in .bss, and on a 64-bit target .bss and the
+malloc'd heap are routinely more than 2GB apart, so the difference truncated
+to garbage and the QuakeC interpreter dereferenced a wild pointer.  That made
+every `map` command segfault on aarch64 while demo playback, which never
+spawns a server, appeared fine.
+
+Copying into a hunk-allocated pool keeps the offset representable.  The pool
+is slot-based rather than a bump allocator so that repeatedly setting the
+same string cannot exhaust it.
+===============
+*/
+string_t PR_SetEngineString (int slot, char *s)
+{
+	char	*dst;
+
+	if (slot < 0 || slot >= PR_ENGINE_STRING_SLOTS)
+		Sys_Error ("PR_SetEngineString: bad slot %i", slot);
+	if (!pr_engine_strings)
+		Sys_Error ("PR_SetEngineString: called before PR_LoadProgs");
+
+	dst = pr_engine_strings + slot * PR_ENGINE_STRING_SIZE;
+
+	if (!s)
+		s = "";
+	strncpy (dst, s, PR_ENGINE_STRING_SIZE - 1);
+	dst[PR_ENGINE_STRING_SIZE - 1] = 0;
+
+	return (string_t)(dst - pr_strings);
+}
+
 /*
 ===============
 PR_LoadProgs
@@ -1019,7 +1061,14 @@ void PR_LoadProgs (void)
 	pr_globals = (float *)pr_global_struct;
 	
 	pr_edict_size = progs->entityfields * 4 + sizeof (edict_t) - sizeof(entvars_t);
-	
+
+// Engine strings live in the hunk alongside progs.dat so that the offset
+// from pr_strings always fits in a string_t.  See PR_SetEngineString.
+	pr_engine_strings = Hunk_AllocName (
+			PR_ENGINE_STRING_SLOTS * PR_ENGINE_STRING_SIZE, "engstr");
+	memset (pr_engine_strings, 0,
+			PR_ENGINE_STRING_SLOTS * PR_ENGINE_STRING_SIZE);
+
 // byte swap the lumps
 	for (i=0 ; i<progs->numstatements ; i++)
 	{
