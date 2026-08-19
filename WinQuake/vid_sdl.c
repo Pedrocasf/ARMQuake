@@ -196,9 +196,12 @@ void	VID_Init (unsigned char *palette)
 		}
 		else
 		{
-			Con_Printf ("VID: direct surface, %dx%d @ %d bpp\n",
+			const char *drv = SDL_GetCurrentVideoDriver ();
+
+			Con_Printf ("VID: direct surface, %dx%d @ %d bpp, driver %s\n",
 					sdl_winsurf->w, sdl_winsurf->h,
-					sdl_winsurf->format->BitsPerPixel * 1);
+					sdl_winsurf->format->BitsPerPixel * 1,
+					drv ? drv : "?");
 		}
 	}
 
