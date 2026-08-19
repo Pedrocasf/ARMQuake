@@ -7,8 +7,10 @@
 # r_aclip.c, r_alias.c, r_surf.c, snd_mix.c, mathlib.c, world.c and the
 # self-modifying-code stubs in nonintel.c are used instead.
 #
-# Build:            make -f Makefile.ARM
-# Cross-compile:    make -f Makefile.ARM CC=arm-linux-gnueabihf-gcc
+# Build (native):   make -f Makefile.ARM
+# Cross-compile:    make -f Makefile.ARM CC=arm-linux-gnueabihf-gcc \
+#                        SDL_CONFIG=/path/to/target/sdl2-config
+# armv7 via qemu:   ./build-armv7.sh [armv7-rootfs]    (no cross-gcc needed)
 # Debug build:      make -f Makefile.ARM debug
 #
 # SDL2 is the only external dependency -- video, input and audio.  No X11,

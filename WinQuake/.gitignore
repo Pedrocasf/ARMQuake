@@ -2,6 +2,7 @@
 debug*/
 release*/
 asan/
+.armv7-wrappers/
 
 # Game data (not redistributable)
 id1/
