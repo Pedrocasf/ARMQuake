@@ -34,10 +34,23 @@ viddef_t	vid;				// global video state
 static SDL_Window	*sdl_window;
 static SDL_Renderer	*sdl_renderer;
 static SDL_Texture	*sdl_texture;
+static SDL_Surface	*sdl_winsurf;
 
-static Uint32	sdl_palette[256];	// palette index -> ARGB8888
+// Two ways to get the 8-bit frame onto the screen:
+//
+//   surface path (default) -- convert straight into the window surface and
+//     SDL_UpdateWindowSurface.  One pass over the pixels, no texture, no
+//     scaling.  This is the right path on a part with no GPU.
+//
+//   renderer path (-sdlrenderer) -- upload to a streaming texture and let
+//     SDL_Renderer scale it to the window.  Wanted only when a GPU can do
+//     the scaling for free; with the software renderer it costs a texture
+//     upload plus a full rescale of every frame.
+static qboolean	use_renderer;
+
+static Uint32	sdl_palette[256];	// palette index -> target pixel format
 static byte		*vid_buffer;		// 8-bit, what the renderer draws into
-static Uint32	*vid_argb;			// 32-bit conversion target
+static Uint32	*vid_argb;			// 32-bit conversion target (renderer path)
 
 static int		vid_highhunkmark;
 static int		vid_surfcachesize;
@@ -69,6 +82,17 @@ item pickups, underwater tint).
 void	VID_SetPalette (unsigned char *palette)
 {
 	int		i;
+
+	// On the surface path the entries must be in the window surface's own
+	// format, which is whatever the panel wants; on the renderer path the
+	// texture is ARGB8888.
+	if (!use_renderer && sdl_winsurf)
+	{
+		for (i = 0 ; i < 256 ; i++)
+			sdl_palette[i] = SDL_MapRGB (sdl_winsurf->format,
+					palette[i*3+0], palette[i*3+1], palette[i*3+2]);
+		return;
+	}
 
 	for (i = 0 ; i < 256 ; i++)
 	{
@@ -150,27 +174,56 @@ void	VID_Init (unsigned char *palette)
 	if (!sdl_window)
 		Sys_Error ("VID: SDL_CreateWindow failed: %s", SDL_GetError());
 
-	sdl_renderer = SDL_CreateRenderer (sdl_window, -1, 0);
-	if (!sdl_renderer)
-		Sys_Error ("VID: SDL_CreateRenderer failed: %s", SDL_GetError());
+	use_renderer = (COM_CheckParm("-sdlrenderer") != 0);
 
-	// letterbox and scale for us; nearest-neighbour keeps the pixels crisp
-	SDL_SetHint (SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-	SDL_RenderSetLogicalSize (sdl_renderer, vid.width, vid.height);
+	if (!use_renderer)
+	{
+		sdl_winsurf = SDL_GetWindowSurface (sdl_window);
+		if (!sdl_winsurf)
+		{
+			Con_Printf ("VID: no window surface (%s), using SDL_Renderer\n",
+					SDL_GetError());
+			use_renderer = true;
+		}
+		else if (sdl_winsurf->format->BytesPerPixel != 4 &&
+				 sdl_winsurf->format->BytesPerPixel != 2)
+		{
+			Con_Printf ("VID: window surface is %d bytes/pixel, "
+					"using SDL_Renderer\n",
+					sdl_winsurf->format->BytesPerPixel);
+			sdl_winsurf = NULL;
+			use_renderer = true;
+		}
+		else
+		{
+			Con_Printf ("VID: direct surface, %dx%d @ %d bpp\n",
+					sdl_winsurf->w, sdl_winsurf->h,
+					sdl_winsurf->format->BitsPerPixel * 1);
+		}
+	}
 
-	sdl_texture = SDL_CreateTexture (sdl_renderer, SDL_PIXELFORMAT_ARGB8888,
-					SDL_TEXTUREACCESS_STREAMING, vid.width, vid.height);
-	if (!sdl_texture)
-		Sys_Error ("VID: SDL_CreateTexture failed: %s", SDL_GetError());
-
-	// Report what we actually got.  On a part with no GPU, SDL falls back to
-	// its software renderer, and any mismatch between the render size and the
-	// output size then costs a full software rescale of every frame -- which
-	// can dwarf the rasteriser itself and is invisible to r_dspeeds.
+	if (use_renderer)
 	{
 		SDL_RendererInfo	info;
 		int					ow = 0, oh = 0;
 
+		sdl_renderer = SDL_CreateRenderer (sdl_window, -1, 0);
+		if (!sdl_renderer)
+			Sys_Error ("VID: SDL_CreateRenderer failed: %s", SDL_GetError());
+
+		// letterbox and scale for us; nearest-neighbour keeps the pixels crisp
+		SDL_SetHint (SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+		SDL_RenderSetLogicalSize (sdl_renderer, vid.width, vid.height);
+
+		sdl_texture = SDL_CreateTexture (sdl_renderer,
+						SDL_PIXELFORMAT_ARGB8888,
+						SDL_TEXTUREACCESS_STREAMING, vid.width, vid.height);
+		if (!sdl_texture)
+			Sys_Error ("VID: SDL_CreateTexture failed: %s", SDL_GetError());
+
+		// On a part with no GPU this path costs a texture upload plus a full
+		// software rescale of every frame, and none of it is visible to
+		// r_dspeeds, which only measures inside R_RenderView.
 		SDL_GetRendererOutputSize (sdl_renderer, &ow, &oh);
 
 		if (SDL_GetRendererInfo (sdl_renderer, &info) == 0)
@@ -187,8 +240,11 @@ void	VID_Init (unsigned char *palette)
 	pixels = vid.width * vid.height;
 
 	vid_buffer = (byte *) malloc (pixels);
-	vid_argb   = (Uint32 *) malloc (pixels * sizeof(Uint32));
-	if (!vid_buffer || !vid_argb)
+	// Only the renderer path needs the intermediate 32-bit buffer; the
+	// surface path converts straight into the window surface.
+	vid_argb = use_renderer ?
+			(Uint32 *) malloc (pixels * sizeof(Uint32)) : NULL;
+	if (!vid_buffer || (use_renderer && !vid_argb))
 		Sys_Error ("VID: not enough memory for the framebuffer");
 	memset (vid_buffer, 0, pixels);
 
@@ -235,6 +291,8 @@ void	VID_Shutdown (void)
 
 	IN_GrabMouse (false);
 
+	sdl_winsurf = NULL;		// owned by the window, not freed here
+
 	if (sdl_texture)  { SDL_DestroyTexture (sdl_texture);   sdl_texture = NULL; }
 	if (sdl_renderer) { SDL_DestroyRenderer (sdl_renderer); sdl_renderer = NULL; }
 	if (sdl_window)   { SDL_DestroyWindow (sdl_window);     sdl_window = NULL; }
@@ -262,6 +320,110 @@ void	VID_Update (vrect_t *rects)
 
 	if (!vid_initialized)
 		return;
+
+	if (!use_renderer)
+	{
+		int		w, h, x, y, ox, oy, zoom;
+		byte	*srow;
+
+		// The surface is invalidated by a resize, so re-fetch each frame;
+		// this is a cheap accessor, not an allocation.
+		sdl_winsurf = SDL_GetWindowSurface (sdl_window);
+		if (!sdl_winsurf)
+			return;
+
+		// Integer nearest-neighbour scaling only, centred, with letterboxing
+		// for whatever is left over.  Pixel replication is cheap; SDL's
+		// general scaler is not, and on a GPU-less part it can cost more than
+		// the rasteriser itself.  A window that cannot fit one whole copy
+		// falls back to scale 1 and gets cropped.
+		zoom = sdl_winsurf->w / (int)vid.width;
+		if (sdl_winsurf->h / (int)vid.height < zoom)
+			zoom = sdl_winsurf->h / (int)vid.height;
+		if (zoom < 1)
+			zoom = 1;
+
+		w = (int)vid.width;
+		h = (int)vid.height;
+		if (w * zoom > sdl_winsurf->w) w = sdl_winsurf->w / zoom;
+		if (h * zoom > sdl_winsurf->h) h = sdl_winsurf->h / zoom;
+
+		ox = (sdl_winsurf->w - w * zoom) / 2;
+		oy = (sdl_winsurf->h - h * zoom) / 2;
+
+		if (SDL_MUSTLOCK (sdl_winsurf) && SDL_LockSurface (sdl_winsurf) < 0)
+			return;
+
+		if (sdl_winsurf->format->BytesPerPixel == 4)
+		{
+			for (y = 0 ; y < h ; y++)
+			{
+				srow = vid_buffer + y * vid.width;
+				dst = (Uint32 *)((byte *)sdl_winsurf->pixels
+						+ (y * zoom + oy) * sdl_winsurf->pitch) + ox;
+
+				if (zoom == 1)
+				{
+					for (x = 0 ; x < w ; x++)
+						dst[x] = sdl_palette[srow[x]];
+				}
+				else
+				{
+					int		k;
+					Uint32	*d = dst;
+
+					for (x = 0 ; x < w ; x++)
+					{
+						Uint32 c = sdl_palette[srow[x]];
+						for (k = 0 ; k < zoom ; k++)
+							*d++ = c;
+					}
+					// replicate the row
+					for (k = 1 ; k < zoom ; k++)
+						memcpy ((byte *)dst + k * sdl_winsurf->pitch, dst,
+								w * zoom * sizeof(Uint32));
+				}
+			}
+		}
+		else	// 2 bytes per pixel
+		{
+			Uint16	*d16;
+
+			for (y = 0 ; y < h ; y++)
+			{
+				srow = vid_buffer + y * vid.width;
+				d16 = (Uint16 *)((byte *)sdl_winsurf->pixels
+						+ (y * zoom + oy) * sdl_winsurf->pitch) + ox;
+
+				if (zoom == 1)
+				{
+					for (x = 0 ; x < w ; x++)
+						d16[x] = (Uint16)sdl_palette[srow[x]];
+				}
+				else
+				{
+					int		k;
+					Uint16	*d = d16;
+
+					for (x = 0 ; x < w ; x++)
+					{
+						Uint16 c = (Uint16)sdl_palette[srow[x]];
+						for (k = 0 ; k < zoom ; k++)
+							*d++ = c;
+					}
+					for (k = 1 ; k < zoom ; k++)
+						memcpy ((byte *)d16 + k * sdl_winsurf->pitch, d16,
+								w * zoom * sizeof(Uint16));
+				}
+			}
+		}
+
+		if (SDL_MUSTLOCK (sdl_winsurf))
+			SDL_UnlockSurface (sdl_winsurf);
+
+		SDL_UpdateWindowSurface (sdl_window);
+		return;
+	}
 
 	pixels = vid.width * vid.height;
 	src = vid_buffer;
