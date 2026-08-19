@@ -163,6 +163,27 @@ void	VID_Init (unsigned char *palette)
 	if (!sdl_texture)
 		Sys_Error ("VID: SDL_CreateTexture failed: %s", SDL_GetError());
 
+	// Report what we actually got.  On a part with no GPU, SDL falls back to
+	// its software renderer, and any mismatch between the render size and the
+	// output size then costs a full software rescale of every frame -- which
+	// can dwarf the rasteriser itself and is invisible to r_dspeeds.
+	{
+		SDL_RendererInfo	info;
+		int					ow = 0, oh = 0;
+
+		SDL_GetRendererOutputSize (sdl_renderer, &ow, &oh);
+
+		if (SDL_GetRendererInfo (sdl_renderer, &info) == 0)
+			Con_Printf ("SDL renderer: %s (%s)\n", info.name,
+				(info.flags & SDL_RENDERER_ACCELERATED) ?
+					"accelerated" : "SOFTWARE");
+
+		Con_Printf ("VID: rendering %dx%d, output %dx%d%s\n",
+				vid.width, vid.height, ow, oh,
+				(ow != (int)vid.width || oh != (int)vid.height) ?
+					"  <-- RESCALING EVERY FRAME" : "");
+	}
+
 	pixels = vid.width * vid.height;
 
 	vid_buffer = (byte *) malloc (pixels);
