@@ -4,6 +4,8 @@
 #include <limits.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/select.h>
+#include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -118,7 +120,7 @@ static char end2[] =
 void Sys_Quit (void)
 {
 	Host_Shutdown();
-    fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~FNDELAY);
+    fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~O_NONBLOCK);
 #if 0
 	if (registered.value)
 		printf("%s", end2);
@@ -142,7 +144,7 @@ void Sys_Error (char *error, ...)
     char        string[1024];
 
 // change stdin to non blocking
-    fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~FNDELAY);
+    fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~O_NONBLOCK);
     
     va_start (argptr,error);
     vsprintf (string,error,argptr);
@@ -280,19 +282,18 @@ void Sys_EditFile(char *filename)
 
 double Sys_FloatTime (void)
 {
-    struct timeval tp;
-    struct timezone tzp; 
-    static int      secbase; 
-    
-    gettimeofday(&tp, &tzp);  
+    struct timespec tp;
+    static time_t   secbase;
+
+    clock_gettime(CLOCK_MONOTONIC, &tp);
 
     if (!secbase)
     {
         secbase = tp.tv_sec;
-        return tp.tv_usec/1000000.0;
+        return tp.tv_nsec/1000000000.0;
     }
 
-    return (tp.tv_sec - secbase) + tp.tv_usec/1000000.0;
+    return (tp.tv_sec - secbase) + tp.tv_nsec/1000000000.0;
 }
 
 // =======================================================================
@@ -381,12 +382,14 @@ int main (int c, char **v)
 	if (j)
 		parms.memsize = (int) (Q_atof(com_argv[j+1]) * 1024 * 1024);
 	parms.membase = malloc (parms.memsize);
+	if (!parms.membase)
+		Sys_Error ("Can't allocate %d byte heap", parms.memsize);
 
 	parms.basedir = basedir;
 // caching is disabled by default, use -cachedir to enable
 //	parms.cachedir = cachedir;
 
-	fcntl(0, F_SETFL, fcntl (0, F_GETFL, 0) | FNDELAY);
+	fcntl(0, F_SETFL, fcntl (0, F_GETFL, 0) | O_NONBLOCK);
 
     Host_Init(&parms);
 
@@ -395,7 +398,7 @@ int main (int c, char **v)
 	if (COM_CheckParm("-nostdout"))
 		nostdout = 1;
 	else {
-		fcntl(0, F_SETFL, fcntl (0, F_GETFL, 0) | FNDELAY);
+		fcntl(0, F_SETFL, fcntl (0, F_GETFL, 0) | O_NONBLOCK);
 		printf ("Linux Quake -- Version %0.3f\n", LINUX_VERSION);
 	}
 

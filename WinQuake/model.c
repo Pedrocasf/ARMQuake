@@ -662,8 +662,14 @@ void Mod_LoadTexinfo (lump_t *l)
 
 	for ( i=0 ; i<count ; i++, in++, out++)
 	{
-		for (j=0 ; j<8 ; j++)
+	// vecs is [2][4]; the original walked it as a flat 8-float array through
+	// vecs[0], which overruns the inner array.  GCC >= 12 treats that as UB
+	// it may exploit at -O2 (-Waggressive-loop-optimizations).
+		for (j=0 ; j<4 ; j++)
+		{
 			out->vecs[0][j] = LittleFloat (in->vecs[0][j]);
+			out->vecs[1][j] = LittleFloat (in->vecs[1][j]);
+		}
 		len1 = Length (out->vecs[0]);
 		len2 = Length (out->vecs[1]);
 		len1 = (len1 + len2)/2;

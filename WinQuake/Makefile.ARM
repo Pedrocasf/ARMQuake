@@ -1,0 +1,183 @@
+#
+# WinQuake (software renderer) makefile for Linux/ARM -- armhf
+#
+# Pure C build.  quakedef.h:64 sets id386 == 0 whenever __i386__ is undefined,
+# so on ARM every .s file would compile to an empty object; they are simply not
+# listed here.  The C fallbacks in d_scan.c, d_polyse.c, r_edge.c, r_draw.c,
+# r_aclip.c, r_alias.c, r_surf.c, snd_mix.c, mathlib.c, world.c and the
+# self-modifying-code stubs in nonintel.c are used instead.
+#
+# Build:            make -f Makefile.ARM
+# Cross-compile:    make -f Makefile.ARM CC=arm-linux-gnueabihf-gcc
+# Debug build:      make -f Makefile.ARM debug
+#
+# This first cut uses the X11 video back-end and the null sound driver.
+#
+
+VERSION = 1.09
+ARCH    = armhf
+
+CC ?= gcc
+
+BUILD_DEBUG_DIR   = debug$(ARCH)
+BUILD_RELEASE_DIR = release$(ARCH)
+
+# -fsigned-char        ARM's plain `char` is unsigned.  COM_Parse (common.c:924),
+#                      Cmd_TokenizeString (cmd.c:495) and Con_Print's word-wrap
+#                      (console.c:299) all detect whitespace with `c <= ' '` on a
+#                      plain char.  Under unsigned char, high-bit bytes -- which
+#                      Quake uses for coloured text -- stop comparing as
+#                      negative and tokenizing silently goes wrong.
+# -fcommon             d_local.h:69 and :83 are tentative definitions sitting in
+#                      a header, not extern declarations.  GCC >= 10 defaults to
+#                      -fno-common, which turns them into multiple-definition
+#                      link errors across every TU that includes d_local.h.
+# -fno-strict-aliasing net_udp.c type-puns struct qsockaddr <-> sockaddr_in, and
+#                      the span drawers alias the framebuffer through several
+#                      pixel types.
+#
+# Deliberately NOT used: -ffast-math.  anglemod() (mathlib.c:163) depends on
+# exact float->int truncation of a value that can exceed 2^31, and the span
+# gradient math in d_polyse.c drifts into visible seams without IEEE semantics.
+#
+# -std=gnu17           GCC >= 15 defaults to gnu23, where `true` and `false` are
+#                      keywords -- which makes common.h's
+#                      `typedef enum {false, true} qboolean;` a syntax error.
+#                      C23 also removes K&R function definitions and redefines
+#                      `()` to mean `(void)`.  This is 1996 C; compile it as C17.
+# -fpermissive         GCC >= 14 promoted implicit-function-declaration,
+#                      int-conversion, incompatible-pointer-types and
+#                      return-mismatch from warnings to hard errors, regardless
+#                      of -std.  This codebase trips all four.
+BASE_CFLAGS = -Wall -Wno-unused-variable -Wno-unused-but-set-variable \
+              -std=gnu17 -fpermissive \
+              -fsigned-char -fcommon -fno-strict-aliasing
+
+# Left empty so the distro's compiler defaults apply -- Raspbian/Debian armhf
+# gcc already targets the right ISA.  Override if you need something specific,
+# e.g. ARCH_CFLAGS="-march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard"
+ARCH_CFLAGS ?=
+
+RELEASE_CFLAGS = $(BASE_CFLAGS) $(ARCH_CFLAGS) -O2 -fomit-frame-pointer
+DEBUG_CFLAGS   = $(BASE_CFLAGS) $(ARCH_CFLAGS) -g -O0
+
+LDFLAGS = -lm -lX11 -lXext
+
+#############################################################################
+# SETUP AND BUILD
+#############################################################################
+
+release:
+	@mkdir -p $(BUILD_RELEASE_DIR)
+	$(MAKE) -f Makefile.ARM targets \
+		BUILDDIR=$(BUILD_RELEASE_DIR) CFLAGS="$(RELEASE_CFLAGS)"
+
+debug:
+	@mkdir -p $(BUILD_DEBUG_DIR)
+	$(MAKE) -f Makefile.ARM targets \
+		BUILDDIR=$(BUILD_DEBUG_DIR) CFLAGS="$(DEBUG_CFLAGS)"
+
+all: release debug
+
+targets: $(BUILDDIR)/quake
+
+#############################################################################
+# OBJECTS
+#############################################################################
+
+# Note: input (IN_Init/IN_Move/IN_Commands/Sys_SendKeyEvents) lives inside
+# vid_x.c, so no in_*.o is linked.  Adding in_null.o would be a duplicate
+# symbol error.
+#
+# snd_null.c replaces the whole sound subsystem, not just the driver, so
+# snd_dma.o / snd_mix.o / snd_mem.o are deliberately absent.  Swapping in a
+# real driver means adding those three back alongside it.
+
+QUAKE_OBJS = \
+	$(BUILDDIR)/chase.o \
+	$(BUILDDIR)/cl_demo.o \
+	$(BUILDDIR)/cl_input.o \
+	$(BUILDDIR)/cl_main.o \
+	$(BUILDDIR)/cl_parse.o \
+	$(BUILDDIR)/cl_tent.o \
+	$(BUILDDIR)/cmd.o \
+	$(BUILDDIR)/common.o \
+	$(BUILDDIR)/console.o \
+	$(BUILDDIR)/crc.o \
+	$(BUILDDIR)/cvar.o \
+	$(BUILDDIR)/draw.o \
+	$(BUILDDIR)/d_edge.o \
+	$(BUILDDIR)/d_fill.o \
+	$(BUILDDIR)/d_init.o \
+	$(BUILDDIR)/d_modech.o \
+	$(BUILDDIR)/d_part.o \
+	$(BUILDDIR)/d_polyse.o \
+	$(BUILDDIR)/d_scan.o \
+	$(BUILDDIR)/d_sky.o \
+	$(BUILDDIR)/d_sprite.o \
+	$(BUILDDIR)/d_surf.o \
+	$(BUILDDIR)/d_vars.o \
+	$(BUILDDIR)/d_zpoint.o \
+	$(BUILDDIR)/host.o \
+	$(BUILDDIR)/host_cmd.o \
+	$(BUILDDIR)/keys.o \
+	$(BUILDDIR)/menu.o \
+	$(BUILDDIR)/mathlib.o \
+	$(BUILDDIR)/model.o \
+	$(BUILDDIR)/nonintel.o \
+	$(BUILDDIR)/pr_cmds.o \
+	$(BUILDDIR)/pr_edict.o \
+	$(BUILDDIR)/pr_exec.o \
+	$(BUILDDIR)/r_aclip.o \
+	$(BUILDDIR)/r_alias.o \
+	$(BUILDDIR)/r_bsp.o \
+	$(BUILDDIR)/r_light.o \
+	$(BUILDDIR)/r_draw.o \
+	$(BUILDDIR)/r_efrag.o \
+	$(BUILDDIR)/r_edge.o \
+	$(BUILDDIR)/r_misc.o \
+	$(BUILDDIR)/r_main.o \
+	$(BUILDDIR)/r_sky.o \
+	$(BUILDDIR)/r_sprite.o \
+	$(BUILDDIR)/r_surf.o \
+	$(BUILDDIR)/r_part.o \
+	$(BUILDDIR)/r_vars.o \
+	$(BUILDDIR)/screen.o \
+	$(BUILDDIR)/sbar.o \
+	$(BUILDDIR)/sv_main.o \
+	$(BUILDDIR)/sv_phys.o \
+	$(BUILDDIR)/sv_move.o \
+	$(BUILDDIR)/sv_user.o \
+	$(BUILDDIR)/zone.o \
+	$(BUILDDIR)/view.o \
+	$(BUILDDIR)/wad.o \
+	$(BUILDDIR)/world.o \
+	$(BUILDDIR)/cd_null.o \
+	$(BUILDDIR)/snd_null.o \
+	$(BUILDDIR)/net_dgrm.o \
+	$(BUILDDIR)/net_loop.o \
+	$(BUILDDIR)/net_main.o \
+	$(BUILDDIR)/net_vcr.o \
+	$(BUILDDIR)/net_udp.o \
+	$(BUILDDIR)/net_bsd.o \
+	$(BUILDDIR)/sys_linux.o \
+	$(BUILDDIR)/vid_x.o
+
+$(BUILDDIR)/quake : $(QUAKE_OBJS)
+	$(CC) -o $@ $(QUAKE_OBJS) $(LDFLAGS)
+
+$(BUILDDIR)/%.o : %.c
+	$(CC) $(CFLAGS) -MMD -MP -o $@ -c $<
+
+# Header dependencies, generated by -MMD above.  Without these, editing a
+# header rebuilds nothing and you get a silently stale link.
+-include $(QUAKE_OBJS:.o=.d)
+
+#############################################################################
+# MISC
+#############################################################################
+
+clean:
+	rm -rf $(BUILD_DEBUG_DIR) $(BUILD_RELEASE_DIR)
+
+.PHONY: all release debug targets clean
