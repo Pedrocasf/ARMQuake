@@ -11,7 +11,8 @@
 # Cross-compile:    make -f Makefile.ARM CC=arm-linux-gnueabihf-gcc
 # Debug build:      make -f Makefile.ARM debug
 #
-# This first cut uses the X11 video back-end and the null sound driver.
+# SDL2 is the only external dependency -- video, input and audio.  No X11,
+# no OSS.  Needs sdl2-config on PATH (or SDL_CONFIG= pointing at it).
 #
 
 VERSION = 1.09
@@ -58,10 +59,17 @@ BASE_CFLAGS = -Wall -Wno-unused-variable -Wno-unused-but-set-variable \
 # e.g. ARCH_CFLAGS="-march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard"
 ARCH_CFLAGS ?=
 
-RELEASE_CFLAGS = $(BASE_CFLAGS) $(ARCH_CFLAGS) -O2 -fomit-frame-pointer
-DEBUG_CFLAGS   = $(BASE_CFLAGS) $(ARCH_CFLAGS) -g -O0
+# SDL2 is the only external dependency: video, input and audio all come from
+# it.  Override SDL_CONFIG when cross-compiling so the target sysroot's
+# sdl2-config is used rather than the build host's.
+SDL_CONFIG ?= sdl2-config
+SDL_CFLAGS := $(shell $(SDL_CONFIG) --cflags)
+SDL_LIBS   := $(shell $(SDL_CONFIG) --libs)
 
-LDFLAGS = -lm -lX11 -lXext
+RELEASE_CFLAGS = $(BASE_CFLAGS) $(ARCH_CFLAGS) $(SDL_CFLAGS) -O2 -fomit-frame-pointer
+DEBUG_CFLAGS   = $(BASE_CFLAGS) $(ARCH_CFLAGS) $(SDL_CFLAGS) -g -O0
+
+LDFLAGS = $(SDL_LIBS) -lm
 
 #############################################################################
 # SETUP AND BUILD
@@ -85,13 +93,16 @@ targets: $(BUILDDIR)/quake
 # OBJECTS
 #############################################################################
 
-# Note: input (IN_Init/IN_Move/IN_Commands/Sys_SendKeyEvents) lives inside
-# vid_x.c, so no in_*.o is linked.  Adding in_null.o would be a duplicate
+# Input (IN_Init/IN_Move/IN_Commands/Sys_SendKeyEvents) lives inside
+# vid_sdl.c, so no in_*.o is linked.  Adding in_null.o would be a duplicate
 # symbol error.
 #
-# snd_null.c replaces the whole sound subsystem, not just the driver, so
-# snd_dma.o / snd_mix.o / snd_mem.o are deliberately absent.  Swapping in a
-# real driver means adding those three back alongside it.
+# snd_sdl.c is a driver, not a subsystem replacement, so it links alongside
+# snd_dma.o / snd_mix.o / snd_mem.o.  (snd_null.c, by contrast, replaces all
+# four and must be linked on its own.)
+#
+# cd_null.o: CD audio is not provided.  cd_linux.c drives a physical CDROM
+# through ioctls that no longer apply, and there is no SDL2 CD API.
 
 QUAKE_OBJS = \
 	$(BUILDDIR)/chase.o \
@@ -153,7 +164,10 @@ QUAKE_OBJS = \
 	$(BUILDDIR)/wad.o \
 	$(BUILDDIR)/world.o \
 	$(BUILDDIR)/cd_null.o \
-	$(BUILDDIR)/snd_null.o \
+	$(BUILDDIR)/snd_dma.o \
+	$(BUILDDIR)/snd_mix.o \
+	$(BUILDDIR)/snd_mem.o \
+	$(BUILDDIR)/snd_sdl.o \
 	$(BUILDDIR)/net_dgrm.o \
 	$(BUILDDIR)/net_loop.o \
 	$(BUILDDIR)/net_main.o \
@@ -161,7 +175,7 @@ QUAKE_OBJS = \
 	$(BUILDDIR)/net_udp.o \
 	$(BUILDDIR)/net_bsd.o \
 	$(BUILDDIR)/sys_linux.o \
-	$(BUILDDIR)/vid_x.o
+	$(BUILDDIR)/vid_sdl.o
 
 $(BUILDDIR)/quake : $(QUAKE_OBJS)
 	$(CC) -o $@ $(QUAKE_OBJS) $(LDFLAGS)

@@ -227,7 +227,12 @@ void S_Init (void)
 		shm->buffer = Hunk_AllocName(1<<16, "shmbuf");
 	}
 
-	Con_Printf ("Sound sampling rate: %i\n", shm->speed);
+	// shm is NULL when SNDDMA_Init failed and we are not faking DMA -- which
+	// is routine on a headless box, in a container, or anywhere without an
+	// audio device.  The rest of S_Init is safe because every entry point
+	// guards on sound_started; only this print was unconditional.
+	if (shm)
+		Con_Printf ("Sound sampling rate: %i\n", shm->speed);
 
 	// provides a tick sound until washed clean
 
