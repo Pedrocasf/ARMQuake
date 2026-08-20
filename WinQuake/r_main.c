@@ -1051,8 +1051,13 @@ void R_RenderView (void)
 	int		dummy;
 	int		delta;
 	
+// Instrumented builds (ASan) have far larger frames than this 1996 heuristic
+// assumes, so allow the tolerance to be widened at compile time for debugging.
+#ifndef R_STACK_SLOP
+#define R_STACK_SLOP 10000
+#endif
 	delta = (byte *)&dummy - r_stack_start;
-	if (delta < -10000 || delta > 10000)
+	if (delta < -R_STACK_SLOP || delta > R_STACK_SLOP)
 		Sys_Error ("R_RenderView: called without enough stack");
 
 	if ( Hunk_LowMark() & 3 )

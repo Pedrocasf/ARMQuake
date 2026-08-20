@@ -107,7 +107,11 @@ void (*vid_menukeyfn)(int key);
 void VID_MenuKey (int key);
 
 typedef unsigned short PIXEL16;
-typedef unsigned long PIXEL24;
+// Must be exactly 4 bytes: the depth-24 XImage is allocated at 4 bytes per
+// pixel (pwidth 3 is rounded up to 4), and st3_fixup writes one of these per
+// pixel.  As `unsigned long` this was 8 bytes on any LP64 target and overran
+// the framebuffer by 2x; it happened to be correct only on 32-bit.
+typedef unsigned int PIXEL24;
 static PIXEL16 st2d_8to16table[256];
 static PIXEL24 st2d_8to24table[256];
 static int shiftmask_fl=0;
@@ -259,8 +263,10 @@ void st3_fixup( XImage *framebuf, int x, int y, int width, int height)
 
 void TragicDeath(int signal_num)
 {
-	XAutoRepeatOn(x_disp);
-	XCloseDisplay(x_disp);
+	// Sys_Error -> Host_Shutdown -> VID_Shutdown already restores auto-repeat
+	// and closes the display.  Doing it here too left that path operating on
+	// a freed Display *, so any SIGINT (Ctrl+C) or SIGTERM died with SIGSEGV
+	// inside XCloseDisplay instead of shutting down cleanly.
 	Sys_Error("This death brought to you by the number %d\n", signal_num);
 }
 
@@ -485,8 +491,8 @@ void	VID_Init (unsigned char *palette)
 
 	XAutoRepeatOff(x_disp);
 
-// for debugging only
-	XSynchronize(x_disp, True);
+// for debugging only -- forces a round trip per X call, very slow
+//	XSynchronize(x_disp, True);
 
 // check for command-line window size
 	if ((pnum=COM_CheckParm("-winsize")))
@@ -711,8 +717,11 @@ void VID_SetPalette(unsigned char *palette)
 void	VID_Shutdown (void)
 {
 	Con_Printf("VID_Shutdown\n");
+	if (!x_disp)
+		return;			// already shut down; closing twice is a use-after-free
 	XAutoRepeatOn(x_disp);
 	XCloseDisplay(x_disp);
+	x_disp = NULL;
 }
 
 int XLateKey(XKeyEvent *ev)

@@ -24,9 +24,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
 #include <errno.h>
 
 #ifdef __sun__
@@ -36,9 +38,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifdef NeXT
 #include <libc.h>
 #endif
-
-extern int gethostname (char *, int);
-extern int close (int);
 
 extern cvar_t hostname;
 
@@ -65,8 +64,15 @@ int UDP_Init (void)
 
 	// determine my name & address
 	gethostname(buff, MAXHOSTNAMELEN);
+	buff[MAXHOSTNAMELEN-1] = 0;
 	local = gethostbyname(buff);
-	myAddr = *(int *)local->h_addr_list[0];
+	if (local && local->h_addr_list[0])
+		myAddr = *(int *)local->h_addr_list[0];
+	else
+	{	// hostname doesn't resolve (common in containers); fall back to loopback
+		Con_Printf("UDP_Init: can't resolve \"%s\", using loopback\n", buff);
+		myAddr = inet_addr("127.0.0.1");
+	}
 
 	// if the quake hostname isn't set, set it to the machine name
 	if (Q_strcmp(hostname.string, "UNNAMED") == 0)

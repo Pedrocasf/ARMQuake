@@ -53,6 +53,22 @@ typedef struct edict_s
 extern	dprograms_t		*progs;
 extern	dfunction_t		*pr_functions;
 extern	char			*pr_strings;
+
+// Strings the engine hands to progs.  A string_t is an offset from
+// pr_strings, so the string must live in the hunk for that offset to fit in
+// an int; taking the difference to a global in .bss overflows on 64-bit.
+// One fixed slot per user, so nothing can exhaust the pool.
+#define	PR_ESTR_WORLDMODEL		0		// sv.worldmodel->name  (mod_known[], .bss)
+#define	PR_ESTR_MAPNAME			1		// sv.name              (server_t sv, .bss)
+#define	PR_ESTR_STARTSPOT		2		// sv.startspot         (server_t sv, .bss)
+#define	PR_ENGINE_STRING_SLOTS	3
+#define	PR_ENGINE_STRING_SIZE	MAX_QPATH
+
+extern	char			*pr_engine_strings;
+
+string_t PR_SetEngineString (int slot, char *s);
+// note: host_client->name does NOT need this -- svs.clients is
+// Hunk_AllocName'd (host.c), so it is already within reach of pr_strings.
 extern	ddef_t			*pr_globaldefs;
 extern	ddef_t			*pr_fielddefs;
 extern	dstatement_t	*pr_statements;
